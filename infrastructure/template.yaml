@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Flaunt Portal frontend — owns the shared static-hosting S3 bucket
+  (webapps.flaunt.network) plus the PORTAL CloudFront distribution.
+  Must be deployed before Flaunt-BMS's stack, which imports the bucket
+  exports from this stack. Must be deployed in us-east-1 (CloudFront +
+  its ACM certificate requirement).
+
+Parameters:
+  HostedZoneId:
+    Type: String
+    Description: >
+      Route 53 Hosted Zone ID for flaunt.network. Find it with:
+      aws route53 list-hosted-zones-by-name --dns-name flaunt.network
+
+  BucketName:
+    Type: String
+    Default: webapps.flaunt.network
+    Description: Shared S3 bucket that hosts both the PORTAL and BMS frontends.
+
+  DomainName:
+    Type: String
+    Default: flaunt.network
+    Description: Public domain name for the Portal frontend.
+
+Resources:
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontServicePrincipalReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  PortalCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  PortalOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: flaunt-portal-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  PortalDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        Aliases:
+          - !Ref DomainName
+        ViewerCertificate:
+          AcmCertificateArn: !Ref PortalCertificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: PortalS3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginPath: /PORTAL
+            OriginAccessControlId: !GetAtt PortalOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: PortalS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # AWS Managed-CachingOptimized
+
+  PortalRecordSetA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt PortalDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW3 # fixed CloudFront hosted zone ID
+        EvaluateTargetHealth: false
+
+  PortalRecordSetAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: AAAA
+      AliasTarget:
+        DNSName: !GetAtt PortalDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW3
+        EvaluateTargetHealth: false
+
+Outputs:
+  BucketName:
+    Value: !Ref FrontendBucket
+    Export:
+      Name: Flaunt-Portal-BucketName
+  BucketRegionalDomainName:
+    Value: !GetAtt FrontendBucket.RegionalDomainName
+    Export:
+      Name: Flaunt-Portal-BucketRegionalDomainName
+  DistributionId:
+    Value: !Ref PortalDistribution
+  DistributionDomainName:
+    Value: !GetAtt PortalDistribution.DomainName

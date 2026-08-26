@@ -1,0 +1,50 @@
+name: Deploy Portal
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: flaunt-portal
+  BUCKET_NAME: webapps.flaunt.network
+  # TODO: replace with the flaunt-portal-deploy-role ARN output by bootstrap/github-oidc.yaml (Flaunt-BACKEND repo)
+  DEPLOY_ROLE_ARN: arn:aws:iam::<AWS_ACCOUNT_ID>:role/flaunt-portal-deploy-role
+  # TODO: replace with the Route 53 Hosted Zone ID for flaunt.network
+  HOSTED_ZONE_ID: <ROUTE53_HOSTED_ZONE_ID>
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "$STACK_NAME" \
+            --template-file infrastructure/template.yaml \
+            --parameter-overrides HostedZoneId="$HOSTED_ZONE_ID" BucketName="$BUCKET_NAME" \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Sync static site to S3
+        run: |
+          aws s3 sync ./public "s3://$BUCKET_NAME/PORTAL" --delete
+
+      - name: Invalidate CloudFront cache
+        run: |
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
+            --output text)
+          aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/*"
