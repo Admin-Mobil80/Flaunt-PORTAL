@@ -25,7 +25,7 @@ ships by pushing here; it needs no CloudFormation deploy and no AWS credentials 
 source so they cannot drift apart:
 
 ```bash
-cd ../design && AWS_PROFILE=cloudmeter node build-site.mjs
+cd ../Flaunt-BACKEND/design && AWS_PROFILE=cloudmeter node build-site.mjs
 ```
 
 That writes this repo's `public/index.html` and Flaunt-BMS's. Commit the result and push.
