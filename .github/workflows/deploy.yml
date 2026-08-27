@@ -41,7 +41,7 @@ jobs:
         run: |
           aws s3 sync public/ "s3://$BUCKET/" \
             --delete \
-            --exclude "*.html" \
+            --exclude "*.html" --exclude "version.json" \
             --cache-control "public, max-age=31536000, immutable"
 
       - name: Sync HTML
@@ -51,6 +51,14 @@ jobs:
             --exclude "*" --include "*.html" \
             --cache-control "no-cache, must-revalidate" \
             --content-type "text/html; charset=utf-8"
+
+      # version.json is how an open tab learns a new build shipped, so it must
+      # never be cached — an immutable copy would pin the tab to this release.
+      - name: Sync version manifest
+        run: |
+          aws s3 cp public/version.json "s3://$BUCKET/version.json" \
+            --cache-control "no-cache, must-revalidate" \
+            --content-type "application/json"
 
       - name: Invalidate CloudFront
         run: |
